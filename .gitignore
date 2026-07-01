@@ -1,0 +1,7 @@
+backend/.env
+bug/
+ref/
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
