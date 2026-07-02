@@ -104,19 +104,6 @@ CREATE TABLE IF NOT EXISTS return_items (
 
 -- ── Views ─────────────────────────────────────────────────────────────────────
 
--- View: daily sales summary
-CREATE OR REPLACE VIEW daily_sales_view AS
-SELECT
-    DATE(t.created_at) AS sale_date,
-    COUNT(DISTINCT t.id) AS total_transactions,
-    COALESCE(SUM(t.total_amount), 0) AS total_revenue,
-    COALESCE(SUM(t.discount_amount), 0) AS total_discount,
-    COALESCE(SUM(ti.quantity), 0) AS total_items_sold
-FROM transactions t
-LEFT JOIN transaction_items ti ON t.id = ti.transaction_id
-WHERE t.status != 'fully_returned'
-GROUP BY DATE(t.created_at);
-
 -- View: product stock by category
 CREATE OR REPLACE VIEW stock_by_category_view AS
 SELECT
