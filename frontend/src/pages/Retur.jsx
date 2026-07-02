@@ -21,6 +21,10 @@ const CONDITION_OPTIONS = [
   { value: 'other', label: 'Lainnya (Full Refund)' },
 ];
 
+function getTransactionItemId(item) {
+  return item?.id ?? item?.transaction_item_id ?? null;
+}
+
 function calcItemRefund(item) {
   const base = Number(item.unit_price) * Number(item.quantity);
   if (item.condition === 'damaged') return base * 0.7;
@@ -58,13 +62,26 @@ export default function Retur() {
       } else {
         // Fetch detail
         try {
-          const detailRes = await client.get(`/transactions/${match.transaction_id}`);
+          const transactionId = match.id || match.transaction_id;
+          const detailRes = await client.get(`/transactions/${transactionId}`);
           const detail = detailRes.data?.data || detailRes.data;
-          setFoundTransaction(detail);
+          setFoundTransaction({
+            ...detail,
+            items: (detail?.items || []).map((item) => ({
+              ...item,
+              transaction_item_id: getTransactionItemId(item),
+            })),
+          });
           setSelectedItems([]);
         } catch {
           // Fallback: use match data
-          setFoundTransaction(match);
+          setFoundTransaction({
+            ...match,
+            items: (match?.items || []).map((item) => ({
+              ...item,
+              transaction_item_id: getTransactionItemId(item),
+            })),
+          });
         }
       }
     } catch {
@@ -75,7 +92,11 @@ export default function Retur() {
   };
 
   const toggleItem = (item) => {
-    const id = item.transaction_item_id;
+    const id = getTransactionItemId(item);
+    if (!id) {
+      toast.error('Item transaksi tidak memiliki ID yang valid.');
+      return;
+    }
     setSelectedItems((prev) => {
       const exists = prev.find((s) => s.transaction_item_id === id);
       if (exists) {
@@ -87,7 +108,6 @@ export default function Retur() {
           transaction_item_id: id,
           quantity: 1,
           condition: 'unsuitable',
-          notes: '',
           max_quantity: Number(item.quantity),
           product_name: item.product_name,
           unit_price: Number(item.unit_price),
@@ -126,14 +146,13 @@ export default function Retur() {
     setSubmitting(true);
     try {
       const payload = {
-        transaction_id: foundTransaction.transaction_id,
+        transaction_id: foundTransaction.id || foundTransaction.transaction_id,
         return_type: returnType,
         return_reason: returnReason.trim(),
         items: selectedItems.map((s) => ({
           transaction_item_id: s.transaction_item_id,
           quantity: s.quantity,
           condition: s.condition,
-          notes: s.notes,
         })),
       };
       const res = await client.post('/returns', payload);
@@ -141,7 +160,7 @@ export default function Retur() {
       setSuccessData(data);
       toast.success('Retur berhasil diproses!');
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Gagal memproses retur.');
+      toast.error(err.response?.data?.error || err.response?.data?.message || 'Gagal memproses retur.');
     } finally {
       setSubmitting(false);
     }
@@ -172,10 +191,10 @@ export default function Retur() {
                 <span className="font-mono font-bold">{successData.return_number}</span>
               </div>
             )}
-            {successData.total_refund !== undefined && (
+            {successData.total_refund_amount !== undefined && (
               <div>
                 <span className="font-medium">Total Refund:</span>{' '}
-                <span className="font-bold">{formatRupiah(successData.total_refund)}</span>
+                <span className="font-bold">{formatRupiah(successData.total_refund_amount)}</span>
               </div>
             )}
             {successData.return_type && (
@@ -299,7 +318,7 @@ export default function Retur() {
                           </div>
 
                           {isChecked && (
-                            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
                               <div>
                                 <label className="text-xs text-gray-600 font-medium">Jumlah Retur</label>
                                 <input
@@ -329,19 +348,7 @@ export default function Retur() {
                                   ))}
                                 </select>
                               </div>
-                              <div>
-                                <label className="text-xs text-gray-600 font-medium">Catatan</label>
-                                <input
-                                  type="text"
-                                  placeholder="Opsional..."
-                                  value={sel.notes}
-                                  onChange={(e) =>
-                                    updateSelected(item.transaction_item_id, 'notes', e.target.value)
-                                  }
-                                  className="mt-1 w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400"
-                                />
-                              </div>
-                              <div className="md:col-span-3 text-xs text-gray-500">
+                              <div className="md:col-span-2 text-xs text-gray-500">
                                 Estimasi refund item ini:{' '}
                                 <span className="font-bold text-green-700">
                                   {formatRupiah(calcItemRefund(sel))}

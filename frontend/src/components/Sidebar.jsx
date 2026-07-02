@@ -8,7 +8,6 @@ const navItems = [
   { label: "Retur", path: "/retur", icon: "↩️", kasirOnly: true },
   { label: "Dashboard", path: "/dashboard", icon: "📊", ownerOnly: true },
   { label: "Produk", path: "/produk", icon: "📦", ownerOnly: true },
-  { label: "Kategori", path: "/kategori", icon: "🏷️", ownerOnly: true },
   { label: "Pengguna", path: "/pengguna", icon: "👥", ownerOnly: true },
   { label: "Laporan", path: "/laporan", icon: "📋", ownerOnly: true },
 ];

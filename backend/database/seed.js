@@ -21,9 +21,15 @@ const users = [
   },
   {
     username: 'kasir1',
-    full_name: 'Ahmad Kasir Toko',
+    full_name: 'Muhammad Sumbul - Kasir Pagi',
     role: 'kasir',
     password: 'kasir123',
+  },
+  {
+    username: 'kasir2',
+    full_name: 'Fitriana Dewi - Kasir Sore',
+    role: 'kasir',
+    password: 'kasir321',
   },
 ];
 

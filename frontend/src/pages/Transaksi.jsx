@@ -28,51 +28,56 @@ function Receipt({ transaction, onClose }) {
 
   const items = t.items || [];
   const subtotal = Number(t.subtotal_amount ?? t.subtotal ?? 0);
-  const taxAmount = Number(t.tax_amount ?? 0);
   const total = Number(t.total_amount ?? t.total ?? 0);
   const paid = Number(t.payment_amount ?? 0);
   const change = Number(t.change_amount ?? Math.max(0, paid - total));
+  const transactionNumber = t.transaction_number || t.transaction_code || t.transaction_id || '—';
+
+  const storeName = 'MIDNIGHT MERIDIAN';
+  const storeAddress = 'Toko Jam Tangan Terpercaya | Jl. Karawaci No. 1, Tangerang';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm flex flex-col max-h-[90vh]">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[90vh] overflow-hidden">
         {/* Header */}
-        <div className="bg-indigo-600 text-white rounded-t-2xl px-6 py-4 text-center flex-shrink-0">
-          <div className="text-xl font-bold tracking-wide">
+        <div className="bg-indigo-600 text-white px-6 py-4 text-center flex-shrink-0">
+          <div className="text-xl font-bold tracking-wide uppercase">
+            {storeName}
+          </div>
+          <div className="text-[11px] text-indigo-100 mt-1 leading-snug">
+            {storeAddress}
+          </div>
+          <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide">
             🧾 Struk Transaksi
           </div>
-          <div className="text-xs text-indigo-200 mt-1">
-            {t.transaction_code || t.transaction_id || "—"}
-          </div>
-          <div className="text-xs text-indigo-200">
-            {t.created_at ? formatDateTime(t.created_at) : ""}
+          <div className="mt-3 space-y-1 text-xs text-indigo-100">
+            <div>No. Transaksi: <span className="font-semibold text-white">{transactionNumber}</span></div>
+            <div>Tanggal: <span className="font-semibold text-white">{t.created_at ? formatDateTime(t.created_at) : '—'}</span></div>
           </div>
         </div>
 
         {/* Body */}
-        <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4 text-sm">
+        <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4 text-sm">
           {/* Customer */}
           {t.customer_name && (
-            <div className="flex justify-between">
+            <div className="flex items-start justify-between gap-4 rounded-xl bg-gray-50 px-4 py-3">
               <span className="text-gray-500">Pelanggan</span>
-              <span className="font-medium text-gray-800">
+              <span className="font-semibold text-gray-800 text-right">
                 {t.customer_name}
               </span>
             </div>
           )}
-          {t.cashier_name && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Kasir</span>
-              <span className="font-medium text-gray-800">
-                {t.cashier_name}
-              </span>
-            </div>
-          )}
 
-          <hr className="border-dashed border-gray-300" />
+          <div className="border-t border-dashed border-gray-300" />
 
           {/* Items */}
           <div className="space-y-3">
+            <div className="grid grid-cols-[1.7fr_0.5fr_0.8fr_0.9fr] gap-2 text-[11px] font-bold uppercase tracking-wide text-gray-500 pb-2 border-b border-gray-200">
+              <div>Produk</div>
+              <div className="text-right">Qty</div>
+              <div className="text-right">Harga</div>
+              <div className="text-right">Subtotal</div>
+            </div>
             {items.map((item, idx) => {
               const unitPrice = Number(item.unit_price ?? 0);
               const qty = Number(item.quantity ?? 1);
@@ -83,60 +88,51 @@ function Receipt({ transaction, onClose }) {
               const lineTotal = discountedUnit * qty;
 
               return (
-                <div key={idx} className="space-y-0.5">
-                  <div className="font-medium text-gray-800 leading-tight">
-                    {item.product_name}
+                <div key={idx} className="grid grid-cols-[1.7fr_0.5fr_0.8fr_0.9fr] gap-2 items-start py-1.5 border-b border-dashed border-gray-100 last:border-b-0">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-gray-800 leading-tight">
+                      {item.product_name}
+                    </div>
+                    {item.product_brand && (
+                      <div className="text-xs text-gray-400 truncate mt-0.5">
+                        {item.product_brand}
+                      </div>
+                    )}
+                    {discPct > 0 && (
+                      <div className="text-[11px] text-red-500 mt-1">
+                        Diskon {discPct}%
+                      </div>
+                    )}
                   </div>
-                  {item.product_brand && (
-                    <div className="text-xs text-gray-400">
-                      {item.product_brand}
+                  <div className="text-right text-gray-700 font-medium pt-0.5">
+                    {qty}
+                  </div>
+                  <div className="text-right text-gray-700 pt-0.5">
+                    {formatRupiah(discPct > 0 ? discountedUnit : unitPrice)}
+                  </div>
+                  <div className="text-right font-semibold text-gray-900 pt-0.5">
+                    {formatRupiah(lineTotal)}
+                  </div>
+                  {discPct > 0 && (
+                    <div className="col-span-4 -mt-1 text-[11px] text-gray-400 text-right">
+                      Harga awal: {formatRupiah(unitPrice)}
                     </div>
                   )}
-                  <div className="flex justify-between items-end">
-                    <div className="text-xs text-gray-500 space-y-0.5">
-                      {discPct > 0 ? (
-                        <>
-                          <div className="line-through text-gray-400">
-                            {formatRupiah(unitPrice)} × {qty}
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <span>
-                              {formatRupiah(discountedUnit)} × {qty}
-                            </span>
-                            <span className="bg-red-100 text-red-600 px-1 rounded text-xs font-bold">
-                              -{discPct}%
-                            </span>
-                          </div>
-                        </>
-                      ) : (
-                        <div>
-                          {formatRupiah(unitPrice)} × {qty}
-                        </div>
-                      )}
-                    </div>
-                    <div className="font-semibold text-gray-800">
-                      {formatRupiah(lineTotal)}
-                    </div>
-                  </div>
                 </div>
               );
             })}
           </div>
 
-          <hr className="border-dashed border-gray-300" />
+          <div className="border-t border-dashed border-gray-300" />
 
           {/* Summary */}
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 rounded-xl bg-gray-50 px-4 py-3">
             <div className="flex justify-between text-gray-600">
               <span>Subtotal</span>
               <span>{formatRupiah(subtotal)}</span>
             </div>
-            <div className="flex justify-between text-gray-600">
-              <span>Pajak ({t.tax_percent ?? 0}%)</span>
-              <span>+{formatRupiah(taxAmount)}</span>
-            </div>
-            <div className="flex justify-between font-bold text-base text-gray-900 pt-1 border-t border-gray-200">
-              <span>TOTAL</span>
+            <div className="flex justify-between font-bold text-base text-gray-900 pt-1 border-t border-dashed border-gray-300">
+              <span>Total Keseluruhan</span>
               <span className="text-indigo-700">{formatRupiah(total)}</span>
             </div>
             <div className="flex justify-between text-gray-600">

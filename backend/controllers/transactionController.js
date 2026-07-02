@@ -3,7 +3,7 @@ const pool = require("../config/db");
 // GET /api/transactions
 const getTransactions = async (req, res) => {
   try {
-    const { date, page = 1, limit = 20 } = req.query;
+    const { date, search, page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
     const conditions = [];
@@ -13,6 +13,12 @@ const getTransactions = async (req, res) => {
     if (date) {
       conditions.push(`DATE(t.created_at) = $${idx++}`);
       values.push(date);
+    }
+
+    if (search) {
+      conditions.push(`(t.transaction_number ILIKE $${idx} OR t.customer_name ILIKE $${idx})`);
+      values.push(`%${search}%`);
+      idx += 1;
     }
 
     const whereClause =
