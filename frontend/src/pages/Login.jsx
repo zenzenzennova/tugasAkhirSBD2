@@ -37,7 +37,7 @@ export default function Login() {
       <div className="w-full max-w-sm">
         {/* Logo / Brand */}
         <div className="text-center mb-8">
-          <div className="text-6xl mb-3">🕐</div>
+          <img src="/logo.jpeg" alt="Logo" className="w-20 h-20 mx-auto rounded-full object-cover mb-4 border-2 border-indigo-400/30 shadow-md" />
           <h1 className="text-3xl font-bold text-indigo-400">Midnight Meridian</h1>
           <p className="text-gray-400 mt-1 text-sm">Sistem Informasi Kasir</p>
         </div>

@@ -1,15 +1,5 @@
-# Stage 1 — Build React app
-FROM node:18-alpine AS builder
-
-WORKDIR /app
-
-COPY package*.json ./
-RUN npm install
-
-COPY . .
-RUN npm run build
-
-# Stage 2 — Serve with Nginx
+# Pre-built frontend (built on host with: npm run build)
+# Docker only serves the static files via Nginx — no Node/build stage needed
 FROM nginx:1.25-alpine
 
 # Remove default nginx config
@@ -18,8 +8,8 @@ RUN rm /etc/nginx/conf.d/default.conf
 # Copy our custom nginx config
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Copy built React app
-COPY --from=builder /app/dist /usr/share/nginx/html
+# Copy pre-built React app from host
+COPY dist /usr/share/nginx/html
 
 EXPOSE 80
 

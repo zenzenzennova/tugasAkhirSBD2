@@ -21,8 +21,7 @@ const getTransactions = async (req, res) => {
       idx += 1;
     }
 
-    const whereClause =
-      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
     // Total count for pagination
     const countResult = await pool.query(
@@ -51,6 +50,7 @@ const getTransactions = async (req, res) => {
          t.change_amount,
          t.status,
          t.notes,
+         t.items,
          t.created_at
        FROM transactions t
        JOIN users u ON t.cashier_id = u.id
@@ -100,6 +100,7 @@ const getTransactionById = async (req, res) => {
          t.change_amount,
          t.status,
          t.notes,
+         t.items,
          t.created_at
        FROM transactions t
        JOIN users u ON t.cashier_id = u.id
@@ -113,29 +114,9 @@ const getTransactionById = async (req, res) => {
         .json({ success: false, error: "Transaksi tidak ditemukan." });
     }
 
-    const itemsResult = await pool.query(
-      `SELECT
-         ti.id,
-         ti.product_id,
-         ti.product_name,
-         ti.product_brand,
-         ti.unit_price,
-         ti.quantity,
-         ti.item_discount_percent,
-         ti.item_discount_amount,
-         ti.subtotal
-       FROM transaction_items ti
-       WHERE ti.transaction_id = $1
-       ORDER BY ti.id ASC`,
-      [id],
-    );
-
     return res.status(200).json({
       success: true,
-      data: {
-        ...txResult.rows[0],
-        items: itemsResult.rows,
-      },
+      data: txResult.rows[0],
     });
   } catch (err) {
     console.error("getTransactionById error:", err);
@@ -152,11 +133,11 @@ const createTransaction = async (req, res) => {
     const {
       customer_name,
       items,
-      tax_percent = 0,
       payment_amount,
       notes,
     } = req.body;
     const discount_percent = 0; // discount is product-level, not transaction-level
+    const tax_percent = 10; // Hardcoded to 10% as per requirements
 
     // ── Validate input ────────────────────────────────────────────────────────
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -191,13 +172,12 @@ const createTransaction = async (req, res) => {
     // ── Validate & enrich each item ───────────────────────────────────────────
     const enrichedItems = [];
     for (const item of items) {
-      const { product_id, quantity, item_discount_percent = 0 } = item;
+      const { product_id, quantity } = item;
 
       if (!product_id || !quantity || parseInt(quantity, 10) <= 0) {
         return res.status(400).json({
           success: false,
-          error:
-            "Setiap item harus memiliki product_id dan quantity yang valid.",
+          error: "Setiap item harus memiliki product_id dan quantity yang valid.",
         });
       }
 
@@ -224,12 +204,11 @@ const createTransaction = async (req, res) => {
         });
       }
 
-      // Use product's own discount_percent, ignoring any per-item override from request
+      // Use product's own discount_percent
       const productDiscount = parseFloat(product.discount_percent) || 0;
       const base = parseFloat(product.price) * qty;
       const itemDiscAmount = base * (productDiscount / 100);
       const itemSubtotal = base - itemDiscAmount;
-      const itemDiscPct = productDiscount;
 
       enrichedItems.push({
         product_id: product.id,
@@ -276,8 +255,8 @@ const createTransaction = async (req, res) => {
       `INSERT INTO transactions
          (transaction_number, cashier_id, customer_name,
           subtotal, discount_percent, discount_amount, tax_percent, tax_amount,
-          total_amount, payment_amount, change_amount, status, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'completed', $12)
+          total_amount, payment_amount, change_amount, status, notes, items)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'completed', $12, $13)
        RETURNING *`,
       [
         transactionNumber,
@@ -292,33 +271,12 @@ const createTransaction = async (req, res) => {
         paymentAmt,
         changeAmount,
         notes || null,
+        JSON.stringify(enrichedItems) // Save directly as JSONB
       ],
     );
 
-    const transactionId = txInsert.rows[0].id;
-    const insertedItems = [];
-
+    // Update stocks
     for (const item of enrichedItems) {
-      const itemInsert = await client.query(
-        `INSERT INTO transaction_items
-           (transaction_id, product_id, product_name, product_brand,
-            unit_price, quantity, item_discount_percent, item_discount_amount, subtotal)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING *`,
-        [
-          transactionId,
-          item.product_id,
-          item.product_name,
-          item.product_brand,
-          item.unit_price,
-          item.quantity,
-          item.item_discount_percent,
-          item.item_discount_amount,
-          item.subtotal,
-        ],
-      );
-      insertedItems.push(itemInsert.rows[0]);
-
       await client.query(
         "UPDATE products SET stock = stock - $1, updated_at = NOW() WHERE id = $2",
         [item.quantity, item.product_id],
@@ -329,10 +287,7 @@ const createTransaction = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      data: {
-        ...txInsert.rows[0],
-        items: insertedItems,
-      },
+      data: txInsert.rows[0],
     });
   } catch (err) {
     await client.query("ROLLBACK");
@@ -367,6 +322,7 @@ const getReceipt = async (req, res) => {
          t.change_amount,
          t.status,
          t.notes,
+         t.items,
          t.created_at
        FROM transactions t
        JOIN users u ON t.cashier_id = u.id
@@ -380,23 +336,6 @@ const getReceipt = async (req, res) => {
         .json({ success: false, error: "Transaksi tidak ditemukan." });
     }
 
-    const itemsResult = await pool.query(
-      `SELECT
-         ti.id,
-         ti.product_id,
-         ti.product_name,
-         ti.product_brand,
-         ti.unit_price,
-         ti.quantity,
-         ti.item_discount_percent,
-         ti.item_discount_amount,
-         ti.subtotal
-       FROM transaction_items ti
-       WHERE ti.transaction_id = $1
-       ORDER BY ti.id ASC`,
-      [id],
-    );
-
     const transaction = txResult.rows[0];
 
     return res.status(200).json({
@@ -408,7 +347,7 @@ const getReceipt = async (req, res) => {
           date: transaction.created_at,
           cashier: transaction.cashier_name,
           customer_name: transaction.customer_name,
-          items: itemsResult.rows,
+          items: transaction.items,
           subtotal: transaction.subtotal,
           discount_percent: transaction.discount_percent,
           discount_amount: transaction.discount_amount,

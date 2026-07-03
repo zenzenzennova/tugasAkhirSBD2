@@ -1,5 +1,22 @@
 const pool = require("../config/db");
 
+// Static category mappings for backward compatibility
+const staticCategories = {
+  1: { category_name: "Jam Tangan Analog", watch_type: "analog", brand_origin: "impor" },
+  2: { category_name: "Jam Tangan Digital", watch_type: "digital", brand_origin: "impor" },
+  3: { category_name: "Smartwatch", watch_type: "smartwatch", brand_origin: "impor" }
+};
+
+const mapProductCategory = (prod) => {
+  const cat = staticCategories[prod.category_id] || { category_name: "-", watch_type: null, brand_origin: null };
+  return {
+    ...prod,
+    category_name: cat.category_name,
+    watch_type: cat.watch_type,
+    brand_origin: cat.brand_origin
+  };
+};
+
 // GET /api/products
 const getProducts = async (req, res) => {
   try {
@@ -21,17 +38,23 @@ const getProducts = async (req, res) => {
     }
 
     if (watch_type) {
-      conditions.push(`c.watch_type = $${idx++}`);
-      values.push(watch_type);
+      let targetId = 0;
+      if (watch_type === 'analog') targetId = 1;
+      else if (watch_type === 'digital') targetId = 2;
+      else if (watch_type === 'smartwatch') targetId = 3;
+
+      conditions.push(`p.category_id = $${idx++}`);
+      values.push(targetId);
     }
 
     if (brand_origin) {
-      conditions.push(`c.brand_origin = $${idx++}`);
-      values.push(brand_origin);
+      // In static configuration, all categories are 'impor', so 'lokal' matches nothing
+      if (brand_origin === 'lokal') {
+        conditions.push(`p.category_id = 9999`); // dummy to return nothing
+      }
     }
 
-    const whereClause =
-      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
     const result = await pool.query(
       `SELECT
@@ -46,18 +69,16 @@ const getProducts = async (req, res) => {
          p.category_id,
          p.is_active,
          p.created_at,
-         p.updated_at,
-         c.name AS category_name,
-         c.watch_type,
-         c.brand_origin
+         p.updated_at
        FROM products p
-       LEFT JOIN categories c ON p.category_id = c.id
        ${whereClause}
        ORDER BY p.name ASC`,
       values,
     );
 
-    return res.status(200).json({ success: true, data: result.rows });
+    const mapped = result.rows.map(mapProductCategory);
+
+    return res.status(200).json({ success: true, data: mapped });
   } catch (err) {
     console.error("getProducts error:", err);
     return res
@@ -78,17 +99,14 @@ const getProductById = async (req, res) => {
          p.brand,
          p.model_type,
          p.price,
+         p.discount_percent,
          p.stock,
          p.warranty_months,
          p.category_id,
          p.is_active,
          p.created_at,
-         p.updated_at,
-         c.name AS category_name,
-         c.watch_type,
-         c.brand_origin
+         p.updated_at
        FROM products p
-       LEFT JOIN categories c ON p.category_id = c.id
        WHERE p.id = $1 AND p.is_active = TRUE`,
       [id],
     );
@@ -99,7 +117,7 @@ const getProductById = async (req, res) => {
         .json({ success: false, error: "Produk tidak ditemukan." });
     }
 
-    const product = result.rows[0];
+    const product = mapProductCategory(result.rows[0]);
     product.low_stock = product.stock <= 5;
 
     return res.status(200).json({ success: true, data: product });
@@ -168,7 +186,8 @@ const createProduct = async (req, res) => {
       ],
     );
 
-    return res.status(201).json({ success: true, data: result.rows[0] });
+    const product = mapProductCategory(result.rows[0]);
+    return res.status(201).json({ success: true, data: product });
   } catch (err) {
     console.error("createProduct error:", err);
     return res
@@ -271,7 +290,8 @@ const updateProduct = async (req, res) => {
       values,
     );
 
-    return res.status(200).json({ success: true, data: result.rows[0] });
+    const product = mapProductCategory(result.rows[0]);
+    return res.status(200).json({ success: true, data: product });
   } catch (err) {
     console.error("updateProduct error:", err);
     return res
@@ -349,7 +369,8 @@ const updateStock = async (req, res) => {
       [newStock, id],
     );
 
-    return res.status(200).json({ success: true, data: result.rows[0] });
+    const product = mapProductCategory(result.rows[0]);
+    return res.status(200).json({ success: true, data: product });
   } catch (err) {
     console.error("updateStock error:", err);
     return res

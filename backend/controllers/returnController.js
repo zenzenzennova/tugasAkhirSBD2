@@ -11,9 +11,8 @@ const getReturns = async (req, res) => {
 
     const result = await pool.query(
       `SELECT
-         r.id,
-         r.return_number,
          r.transaction_id,
+         r.return_number,
          t.transaction_number,
          r.processed_by,
          u.full_name AS processed_by_name,
@@ -22,6 +21,7 @@ const getReturns = async (req, res) => {
          r.total_refund_amount,
          r.status,
          r.notes,
+         r.items,
          r.created_at
        FROM returns r
        JOIN transactions t ON r.transaction_id = t.id
@@ -31,9 +31,15 @@ const getReturns = async (req, res) => {
       [parseInt(limit, 10), offset]
     );
 
+    // Map rows to include 'id' for frontend compatibility if needed
+    const data = result.rows.map(row => ({
+      ...row,
+      id: `${row.transaction_id}_${row.return_number}` // Synthetic ID for UI keying
+    }));
+
     return res.status(200).json({
       success: true,
-      data: result.rows,
+      data,
       pagination: {
         total,
         page: parseInt(page, 10),
@@ -47,60 +53,72 @@ const getReturns = async (req, res) => {
   }
 };
 
-// GET /api/returns/:id
+// GET /api/returns/:syntheticId or /api/returns/:transactionId/:returnNumber
 const getReturnById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const retResult = await pool.query(
-      `SELECT
-         r.id,
-         r.return_number,
-         r.transaction_id,
-         t.transaction_number,
-         r.processed_by,
-         u.full_name AS processed_by_name,
-         r.return_reason,
-         r.return_type,
-         r.total_refund_amount,
-         r.status,
-         r.notes,
-         r.created_at
-       FROM returns r
-       JOIN transactions t ON r.transaction_id = t.id
-       JOIN users u ON r.processed_by = u.id
-       WHERE r.id = $1`,
-      [id]
-    );
+    let transaction_id;
+    let return_number;
+
+    if (id.includes('_')) {
+      const parts = id.split('_');
+      transaction_id = parseInt(parts[0], 10);
+      return_number = parts.slice(1).join('_');
+    } else {
+      // Fallback
+      transaction_id = parseInt(id, 10);
+    }
+
+    let query = `
+      SELECT
+        r.transaction_id,
+        r.return_number,
+        t.transaction_number,
+        r.processed_by,
+        u.full_name AS processed_by_name,
+        r.return_reason,
+        r.return_type,
+        r.total_refund_amount,
+        r.status,
+        r.notes,
+        r.items,
+        r.created_at
+      FROM returns r
+      JOIN transactions t ON r.transaction_id = t.id
+      JOIN users u ON r.processed_by = u.id
+    `;
+    let params = [];
+
+    if (return_number) {
+      query += ` WHERE r.transaction_id = $1 AND r.return_number = $2`;
+      params = [transaction_id, return_number];
+    } else {
+      query += ` WHERE r.transaction_id = $1 LIMIT 1`;
+      params = [transaction_id];
+    }
+
+    const retResult = await pool.query(query, params);
 
     if (retResult.rowCount === 0) {
       return res.status(404).json({ success: false, error: 'Data retur tidak ditemukan.' });
     }
 
-    const itemsResult = await pool.query(
-      `SELECT
-         ri.id,
-         ri.transaction_item_id,
-         ri.product_id,
-         ri.product_name,
-         ri.quantity,
-         ri.unit_price,
-         ri.condition,
-         ri.deduction_rate,
-         ri.refund_amount,
-         ri.notes
-       FROM return_items ri
-       WHERE ri.return_id = $1
-       ORDER BY ri.id ASC`,
-      [id]
-    );
+    const row = retResult.rows[0];
+    const data = {
+      ...row,
+      id: `${row.transaction_id}_${row.return_number}`,
+      // Map returned items to have transaction_item_id and id for compatibility
+      items: (row.items || []).map(item => ({
+        ...item,
+        id: item.product_id,
+        transaction_item_id: item.product_id
+      }))
+    };
 
     return res.status(200).json({
       success: true,
-      data: {
-        ...retResult.rows[0],
-        items: itemsResult.rows,
-      },
+      data
     });
   } catch (err) {
     console.error('getReturnById error:', err);
@@ -130,7 +148,7 @@ const createReturn = async (req, res) => {
 
     // ── Validate transaction ──────────────────────────────────────────────────
     const txResult = await pool.query(
-      'SELECT id, status FROM transactions WHERE id = $1',
+      'SELECT id, status, items FROM transactions WHERE id = $1',
       [transaction_id]
     );
 
@@ -144,6 +162,22 @@ const createReturn = async (req, res) => {
         success: false,
         error: `Transaksi dengan status "${transaction.status}" tidak dapat diretur.`,
       });
+    }
+
+    const txItems = transaction.items || [];
+
+    // Query existing approved returns to verify quantity limits
+    const existingReturnsResult = await pool.query(
+      `SELECT items FROM returns WHERE transaction_id = $1 AND status = 'approved'`,
+      [transaction_id]
+    );
+
+    const returnedQuantities = {}; // product_id -> quantity
+    for (const rRow of existingReturnsResult.rows) {
+      const rItems = rRow.items || [];
+      for (const rItem of rItems) {
+        returnedQuantities[rItem.product_id] = (returnedQuantities[rItem.product_id] || 0) + parseInt(rItem.quantity, 10);
+      }
     }
 
     // ── Validate & enrich return items ────────────────────────────────────────
@@ -171,27 +205,22 @@ const createReturn = async (req, res) => {
         return res.status(400).json({ success: false, error: 'Jumlah item retur harus lebih dari 0.' });
       }
 
-      // Validate transaction_item belongs to this transaction
-      const tiResult = await pool.query(
-        `SELECT ti.id, ti.product_id, ti.product_name, ti.unit_price, ti.quantity AS original_quantity
-         FROM transaction_items ti
-         WHERE ti.id = $1 AND ti.transaction_id = $2`,
-        [transaction_item_id, transaction_id]
-      );
+      // Find the purchased item in the transaction items array
+      const productId = parseInt(transaction_item_id, 10);
+      const txItem = txItems.find(tItem => tItem.product_id === productId);
 
-      if (tiResult.rowCount === 0) {
+      if (!txItem) {
         return res.status(400).json({
           success: false,
-          error: `Transaction item ID ${transaction_item_id} tidak ditemukan dalam transaksi ini.`,
+          error: `Produk dengan ID ${productId} tidak ditemukan dalam transaksi ini.`,
         });
       }
 
-      const ti = tiResult.rows[0];
-
-      if (qty > ti.original_quantity) {
+      const previouslyReturned = returnedQuantities[productId] || 0;
+      if (qty + previouslyReturned > txItem.quantity) {
         return res.status(400).json({
           success: false,
-          error: `Jumlah retur (${qty}) melebihi jumlah pembelian asli (${ti.original_quantity}) untuk produk "${ti.product_name}".`,
+          error: `Jumlah retur (${qty + previouslyReturned}) melebihi jumlah pembelian asli (${txItem.quantity}) untuk produk "${txItem.product_name}".`,
         });
       }
 
@@ -203,21 +232,22 @@ const createReturn = async (req, res) => {
         deductionRate = 30;
         refundMultiplier = 0.70;
       }
-      // 'unsuitable' and 'other' → 0% deduction, full refund
 
-      const refundAmount = parseFloat(ti.unit_price) * qty * refundMultiplier;
+      const refundAmount = parseFloat(txItem.unit_price) * qty * refundMultiplier;
 
       enrichedItems.push({
-        transaction_item_id: ti.id,
-        product_id: ti.product_id,
-        product_name: ti.product_name,
+        product_id: txItem.product_id,
+        product_name: txItem.product_name,
         quantity: qty,
-        unit_price: parseFloat(ti.unit_price),
+        unit_price: parseFloat(txItem.unit_price),
         condition,
         deduction_rate: deductionRate,
         refund_amount: refundAmount,
         notes: itemNotes || null,
       });
+
+      // Update the returned quantities map for checks during this transaction run
+      returnedQuantities[productId] = previouslyReturned + qty;
     }
 
     const totalRefund = enrichedItems.reduce((sum, i) => sum + i.refund_amount, 0);
@@ -235,47 +265,24 @@ const createReturn = async (req, res) => {
 
     const retInsert = await client.query(
       `INSERT INTO returns
-         (return_number, transaction_id, processed_by, return_reason,
-          return_type, total_refund_amount, status, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, 'approved', $7)
+         (transaction_id, return_number, processed_by, return_reason,
+          return_type, total_refund_amount, status, notes, items)
+       VALUES ($1, $2, $3, $4, $5, $6, 'approved', $7, $8)
        RETURNING *`,
       [
-        returnNumber,
         transaction_id,
+        returnNumber,
         req.user.id,
         return_reason,
         return_type,
         totalRefund,
         notes || null,
+        JSON.stringify(enrichedItems)
       ]
     );
 
-    const returnId = retInsert.rows[0].id;
-    const insertedItems = [];
-
+    // Return stock to inventory
     for (const item of enrichedItems) {
-      const riInsert = await client.query(
-        `INSERT INTO return_items
-           (return_id, transaction_item_id, product_id, product_name,
-            quantity, unit_price, condition, deduction_rate, refund_amount, notes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         RETURNING *`,
-        [
-          returnId,
-          item.transaction_item_id,
-          item.product_id,
-          item.product_name,
-          item.quantity,
-          item.unit_price,
-          item.condition,
-          item.deduction_rate,
-          item.refund_amount,
-          item.notes,
-        ]
-      );
-      insertedItems.push(riInsert.rows[0]);
-
-      // Return stock to inventory if product still exists
       if (item.product_id) {
         await client.query(
           'UPDATE products SET stock = stock + $1, updated_at = NOW() WHERE id = $2',
@@ -285,30 +292,9 @@ const createReturn = async (req, res) => {
     }
 
     // ── Determine new transaction status ──────────────────────────────────────
-    // Get all transaction items quantities
-    const allTxItems = await client.query(
-      'SELECT id, quantity FROM transaction_items WHERE transaction_id = $1',
-      [transaction_id]
-    );
-
-    // Sum all returned quantities per transaction_item across all returns (including new ones)
-    const allReturnedItems = await client.query(
-      `SELECT ri.transaction_item_id, SUM(ri.quantity) AS returned_qty
-       FROM return_items ri
-       JOIN returns r ON ri.return_id = r.id
-       WHERE r.transaction_id = $1 AND r.status = 'approved'
-       GROUP BY ri.transaction_item_id`,
-      [transaction_id]
-    );
-
-    const returnedMap = {};
-    for (const row of allReturnedItems.rows) {
-      returnedMap[row.transaction_item_id] = parseInt(row.returned_qty, 10);
-    }
-
-    const fullyReturned = allTxItems.rows.every((ti) => {
-      const returned = returnedMap[ti.id] || 0;
-      return returned >= parseInt(ti.quantity, 10);
+    const fullyReturned = txItems.every(tItem => {
+      const returned = returnedQuantities[tItem.product_id] || 0;
+      return returned >= tItem.quantity;
     });
 
     const newStatus = fullyReturned ? 'fully_returned' : 'partially_returned';
@@ -319,13 +305,21 @@ const createReturn = async (req, res) => {
 
     await client.query('COMMIT');
 
+    const resultRow = retInsert.rows[0];
+    const responseData = {
+      ...resultRow,
+      id: `${resultRow.transaction_id}_${resultRow.return_number}`,
+      items: enrichedItems.map(item => ({
+        ...item,
+        id: item.product_id,
+        transaction_item_id: item.product_id
+      })),
+      transaction_status: newStatus
+    };
+
     return res.status(201).json({
       success: true,
-      data: {
-        ...retInsert.rows[0],
-        items: insertedItems,
-        transaction_status: newStatus,
-      },
+      data: responseData
     });
   } catch (err) {
     await client.query('ROLLBACK');

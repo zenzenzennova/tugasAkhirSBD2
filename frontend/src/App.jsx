@@ -8,7 +8,6 @@ import Dashboard from './pages/Dashboard';
 import Transaksi from './pages/Transaksi';
 import Retur from './pages/Retur';
 import Produk from './pages/Produk';
-import Kategori from './pages/Kategori';
 import Pengguna from './pages/Pengguna';
 import Laporan from './pages/Laporan';
 
@@ -52,14 +51,6 @@ function AppRoutes() {
         element={
           <ProtectedRoute ownerOnly>
             <Layout><Produk /></Layout>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/kategori"
-        element={
-          <ProtectedRoute ownerOnly>
-            <Layout><Kategori /></Layout>
           </ProtectedRoute>
         }
       />

@@ -1,5 +1,11 @@
 const pool = require("../config/db");
 
+const staticCategories = {
+  1: { name: "Jam Tangan Analog", watch_type: "analog" },
+  2: { name: "Jam Tangan Digital", watch_type: "digital" },
+  3: { name: "Smartwatch", watch_type: "smartwatch" }
+};
+
 // GET /api/reports/daily?date=YYYY-MM-DD
 const getDailyReport = async (req, res) => {
   try {
@@ -14,9 +20,13 @@ const getDailyReport = async (req, res) => {
          COALESCE(SUM(t.total_amount), 0) AS total_revenue,
          COALESCE(SUM(t.discount_amount), 0) AS total_discount,
          COALESCE(SUM(t.tax_amount), 0) AS total_tax,
-         COALESCE(SUM(ti.quantity), 0) AS total_items_sold
+         (
+           SELECT COALESCE(SUM(quantity), 0)
+           FROM sales_report_view
+           WHERE DATE(transaction_date) = $1
+             AND transaction_status != 'fully_returned'
+         ) AS total_items_sold
        FROM transactions t
-       LEFT JOIN transaction_items ti ON t.id = ti.transaction_id
        WHERE DATE(t.created_at) = $1
          AND t.status != 'fully_returned'`,
       [reportDate],
@@ -25,13 +35,14 @@ const getDailyReport = async (req, res) => {
     // ── Returns on that date ──────────────────────────────────────────────────
     const returnsResult = await pool.query(
       `SELECT
-         r.id,
+         r.transaction_id,
          r.return_number,
          t.transaction_number,
          u.full_name AS processed_by_name,
          r.return_type,
          r.total_refund_amount,
          r.status,
+         r.items,
          r.created_at
        FROM returns r
        JOIN transactions t ON r.transaction_id = t.id
@@ -41,18 +52,27 @@ const getDailyReport = async (req, res) => {
       [reportDate],
     );
 
+    const returnsWithItems = returnsResult.rows.map(row => ({
+      ...row,
+      id: `${row.transaction_id}_${row.return_number}`,
+      items: (row.items || []).map(item => ({
+        ...item,
+        id: item.product_id,
+        transaction_item_id: item.product_id
+      }))
+    }));
+
     // ── Top products ──────────────────────────────────────────────────────────
     const topProductsResult = await pool.query(
       `SELECT
-         ti.product_name,
-         ti.product_brand,
-         SUM(ti.quantity) AS total_qty_sold,
-         SUM(ti.subtotal) AS total_revenue
-       FROM transactions t
-       JOIN transaction_items ti ON t.id = ti.transaction_id
-       WHERE DATE(t.created_at) = $1
-         AND t.status != 'fully_returned'
-       GROUP BY ti.product_name, ti.product_brand
+         product_name,
+         product_brand,
+         SUM(quantity) AS total_qty_sold,
+         SUM(item_subtotal) AS total_revenue
+       FROM sales_report_view
+       WHERE DATE(transaction_date) = $1
+         AND transaction_status != 'fully_returned'
+       GROUP BY product_name, product_brand
        ORDER BY total_qty_sold DESC
        LIMIT 10`,
       [reportDate],
@@ -68,13 +88,19 @@ const getDailyReport = async (req, res) => {
       `SELECT
          p.id,
          p.name AS product_name,
-         COALESCE(c.watch_type, '-') AS category_type,
+         p.category_id,
          p.stock AS total_stock
        FROM products p
-       LEFT JOIN categories c ON p.category_id = c.id
        WHERE p.is_active = TRUE
-       ORDER BY c.watch_type ASC NULLS LAST, p.name ASC`,
+       ORDER BY p.category_id ASC, p.name ASC`,
     );
+
+    const mappedProductStock = productStockResult.rows.map(p => ({
+      id: p.id,
+      product_name: p.product_name,
+      category_type: (staticCategories[p.category_id]?.watch_type || '-'),
+      total_stock: p.total_stock
+    }));
 
     // ── Full transaction list for that date ───────────────────────────────────
     const transactionsResult = await pool.query(
@@ -90,6 +116,7 @@ const getDailyReport = async (req, res) => {
          t.payment_amount,
          t.change_amount,
          t.status,
+         t.items,
          t.created_at
        FROM transactions t
        JOIN users u ON t.cashier_id = u.id
@@ -98,39 +125,30 @@ const getDailyReport = async (req, res) => {
       [reportDate],
     );
 
-    // For each transaction, fetch its items
-    const transactionsWithItems = [];
-    for (const tx of transactionsResult.rows) {
-      const itemsResult = await pool.query(
-        `SELECT ti.product_name, ti.product_brand, ti.unit_price, ti.quantity,
-           ti.item_discount_percent, ti.item_discount_amount, ti.subtotal
-         FROM transaction_items ti WHERE ti.transaction_id = $1 ORDER BY ti.id ASC`,
-        [tx.id],
-      );
-      transactionsWithItems.push({ ...tx, items: itemsResult.rows });
-    }
-
-    // For each return, fetch its items detail
-    const returnsWithItems = [];
-    for (const ret of returnsResult.rows) {
-      const retItemsResult = await pool.query(
-        `SELECT ri.product_name, ri.quantity, ri.unit_price, ri.condition,
-           ri.deduction_rate, ri.refund_amount, ri.notes
-         FROM return_items ri WHERE ri.return_id = $1 ORDER BY ri.id ASC`,
-        [ret.id],
-      );
-      returnsWithItems.push({ ...ret, items: retItemsResult.rows });
-    }
+    const transactionsWithItems = transactionsResult.rows.map(tx => ({
+      ...tx,
+      items: (tx.items || []).map(item => ({
+        ...item,
+        id: item.product_id,
+        transaction_item_id: item.product_id
+      }))
+    }));
 
     return res.status(200).json({
       success: true,
       data: {
         date: reportDate,
-        summary: summaryResult.rows[0],
+        summary: summaryResult.rows[0] || {
+          total_transactions: 0,
+          total_revenue: 0,
+          total_discount: 0,
+          total_tax: 0,
+          total_items_sold: 0
+        },
         returns: returnsWithItems,
         top_products: topProductsResult.rows,
         stock_by_category: stockResult.rows,
-        stock_by_product: productStockResult.rows,
+        stock_by_product: mappedProductStock,
         transactions: transactionsWithItems,
       },
     });

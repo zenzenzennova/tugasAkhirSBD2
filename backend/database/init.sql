@@ -2,7 +2,7 @@
 -- Sistem Kasir Midnight Meridian — Database Schema
 -- ============================================================
 
--- Users
+-- 1. Users
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
@@ -14,17 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Categories
-CREATE TABLE IF NOT EXISTS categories (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    watch_type VARCHAR(20) CHECK (watch_type IN ('analog', 'digital', 'smartwatch')),
-    brand_origin VARCHAR(10) CHECK (brand_origin IN ('lokal', 'impor')),
-    description TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Products
+-- 2. Products
 CREATE TABLE IF NOT EXISTS products (
     id SERIAL PRIMARY KEY,
     name VARCHAR(200) NOT NULL,
@@ -34,13 +24,13 @@ CREATE TABLE IF NOT EXISTS products (
     discount_percent DECIMAL(5,2) NOT NULL DEFAULT 0 CHECK (discount_percent >= 0 AND discount_percent <= 100),
     stock INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0),
     warranty_months INTEGER NOT NULL DEFAULT 0 CHECK (warranty_months >= 0),
-    category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+    category_id INTEGER NOT NULL CHECK (category_id IN (1, 2, 3)), -- 1: Analog, 2: Digital, 3: Smartwatch
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Transactions
+-- 3. Transactions
 CREATE TABLE IF NOT EXISTS transactions (
     id SERIAL PRIMARY KEY,
     transaction_number VARCHAR(50) UNIQUE NOT NULL,
@@ -56,77 +46,94 @@ CREATE TABLE IF NOT EXISTS transactions (
     change_amount DECIMAL(15,2) NOT NULL CHECK (change_amount >= 0),
     status VARCHAR(20) NOT NULL DEFAULT 'completed' CHECK (status IN ('completed', 'partially_returned', 'fully_returned')),
     notes TEXT,
+    items JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of items in transaction
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Transaction Items
-CREATE TABLE IF NOT EXISTS transaction_items (
-    id SERIAL PRIMARY KEY,
-    transaction_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
-    product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
-    product_name VARCHAR(200) NOT NULL,
-    product_brand VARCHAR(100),
-    unit_price DECIMAL(15,2) NOT NULL CHECK (unit_price > 0),
-    quantity INTEGER NOT NULL CHECK (quantity > 0),
-    item_discount_percent DECIMAL(5,2) NOT NULL DEFAULT 0 CHECK (item_discount_percent >= 0 AND item_discount_percent <= 100),
-    item_discount_amount DECIMAL(15,2) NOT NULL DEFAULT 0 CHECK (item_discount_amount >= 0),
-    subtotal DECIMAL(15,2) NOT NULL CHECK (subtotal >= 0)
-);
-
--- Returns
+-- 4. Returns (WEAK ENTITY dependent on transactions)
 CREATE TABLE IF NOT EXISTS returns (
-    id SERIAL PRIMARY KEY,
-    return_number VARCHAR(50) UNIQUE NOT NULL,
-    transaction_id INTEGER NOT NULL REFERENCES transactions(id),
+    transaction_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+    return_number VARCHAR(50) NOT NULL,
     processed_by INTEGER NOT NULL REFERENCES users(id),
     return_reason TEXT NOT NULL,
     return_type VARCHAR(10) NOT NULL CHECK (return_type IN ('refund', 'exchange')),
     total_refund_amount DECIMAL(15,2) NOT NULL DEFAULT 0 CHECK (total_refund_amount >= 0),
     status VARCHAR(20) NOT NULL DEFAULT 'approved' CHECK (status IN ('pending', 'approved', 'rejected')),
     notes TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Return Items
-CREATE TABLE IF NOT EXISTS return_items (
-    id SERIAL PRIMARY KEY,
-    return_id INTEGER NOT NULL REFERENCES returns(id) ON DELETE CASCADE,
-    transaction_item_id INTEGER REFERENCES transaction_items(id) ON DELETE SET NULL,
-    product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
-    product_name VARCHAR(200) NOT NULL,
-    quantity INTEGER NOT NULL CHECK (quantity > 0),
-    unit_price DECIMAL(15,2) NOT NULL CHECK (unit_price > 0),
-    condition VARCHAR(20) NOT NULL CHECK (condition IN ('damaged', 'unsuitable', 'other')),
-    deduction_rate DECIMAL(5,2) NOT NULL DEFAULT 0,
-    refund_amount DECIMAL(15,2) NOT NULL CHECK (refund_amount >= 0),
-    notes TEXT
+    items JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of returned items
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (transaction_id, return_number)
 );
 
 -- ── Views ─────────────────────────────────────────────────────────────────────
 
--- View: product stock by category
+-- View: product stock by category (using static categories CTE for backward compatibility)
 CREATE OR REPLACE VIEW stock_by_category_view AS
+WITH cats AS (
+  SELECT 1 AS category_id, 'Jam Tangan Analog' AS category_name, 'analog'::varchar AS watch_type, 'impor'::varchar AS brand_origin
+  UNION ALL
+  SELECT 2 AS category_id, 'Jam Tangan Digital' AS category_name, 'digital'::varchar AS watch_type, 'impor'::varchar AS brand_origin
+  UNION ALL
+  SELECT 3 AS category_id, 'Smartwatch' AS category_name, 'smartwatch'::varchar AS watch_type, 'impor'::varchar AS brand_origin
+)
 SELECT
-    c.id AS category_id,
-    c.name AS category_name,
+    c.category_id,
+    c.category_name,
     c.watch_type,
     c.brand_origin,
     COUNT(p.id) AS total_products,
     COALESCE(SUM(p.stock), 0) AS total_stock
-FROM categories c
-LEFT JOIN products p ON c.id = p.category_id AND p.is_active = TRUE
-GROUP BY c.id, c.name, c.watch_type, c.brand_origin;
+FROM cats c
+LEFT JOIN products p ON c.category_id = p.category_id AND p.is_active = TRUE
+GROUP BY c.category_id, c.category_name, c.watch_type, c.brand_origin;
+
+-- View: Sales report flattening view
+CREATE OR REPLACE VIEW sales_report_view AS
+SELECT
+    t.id AS transaction_id,
+    t.transaction_number,
+    t.customer_name,
+    t.created_at AS transaction_date,
+    u.full_name AS cashier_name,
+    (item->>'product_id')::int AS product_id,
+    item->>'product_name' AS product_name,
+    item->>'product_brand' AS product_brand,
+    (item->>'unit_price')::numeric AS unit_price,
+    (item->>'quantity')::int AS quantity,
+    (item->>'item_discount_percent')::numeric AS item_discount_percent,
+    (item->>'item_discount_amount')::numeric AS item_discount_amount,
+    (item->>'subtotal')::numeric AS item_subtotal,
+    t.status AS transaction_status
+FROM transactions t
+JOIN users u ON t.cashier_id = u.id,
+jsonb_array_elements(t.items) AS item;
+
+-- View: Returns report flattening view
+CREATE OR REPLACE VIEW returns_report_view AS
+SELECT
+    r.transaction_id,
+    r.return_number,
+    r.return_reason,
+    r.return_type,
+    r.total_refund_amount,
+    r.status AS return_status,
+    r.created_at AS return_date,
+    u.full_name AS processed_by_name,
+    (item->>'product_id')::int AS product_id,
+    item->>'product_name' AS product_name,
+    (item->>'quantity')::int AS quantity,
+    (item->>'unit_price')::numeric AS unit_price,
+    item->>'condition' AS condition,
+    (item->>'deduction_rate')::numeric AS deduction_rate,
+    (item->>'refund_amount')::numeric AS refund_amount,
+    item->>'notes' AS item_notes
+FROM returns r
+JOIN users u ON r.processed_by = u.id,
+jsonb_array_elements(r.items) AS item;
 
 -- ── Seed Data ─────────────────────────────────────────────────────────────────
 
--- Seed categories (3 only)
-INSERT INTO categories (name, watch_type, brand_origin, description) VALUES
-('Jam Tangan Analog', 'analog', 'impor', 'Jam tangan analog merek internasional'),
-('Jam Tangan Digital', 'digital', 'impor', 'Jam tangan digital merek internasional'),
-('Smartwatch', 'smartwatch', 'impor', 'Smartwatch merek internasional')
-ON CONFLICT DO NOTHING;
-
--- Seed products (3 only)
+-- Seed products directly with their static category_id
 INSERT INTO products (name, brand, model_type, price, stock, warranty_months, category_id, discount_percent) VALUES
 ('Seiko 5 Sports Automatic', 'Seiko', 'SNXS79K', 2500000, 8, 24, 1, 0),
 ('Casio F-91W Digital', 'Casio', 'F-91W', 250000, 20, 12, 2, 10),

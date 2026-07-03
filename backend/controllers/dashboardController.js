@@ -1,5 +1,22 @@
 const pool = require('../config/db');
 
+// Static category mappings for backward compatibility
+const staticCategories = {
+  1: { category_name: "Jam Tangan Analog", watch_type: "analog", brand_origin: "impor" },
+  2: { category_name: "Jam Tangan Digital", watch_type: "digital", brand_origin: "impor" },
+  3: { category_name: "Smartwatch", watch_type: "smartwatch", brand_origin: "impor" }
+};
+
+const mapProductCategory = (prod) => {
+  const cat = staticCategories[prod.category_id] || { category_name: "-", watch_type: null, brand_origin: null };
+  return {
+    ...prod,
+    category_name: cat.category_name,
+    watch_type: cat.watch_type,
+    brand_origin: cat.brand_origin
+  };
+};
+
 // GET /api/dashboard
 const getDashboard = async (req, res) => {
   try {
@@ -18,11 +35,11 @@ const getDashboard = async (req, res) => {
        WHERE DATE(created_at) = CURRENT_DATE`
     );
 
-    // ── Today's items sold ────────────────────────────────────────────────────
+    // ── Today's items sold (JSONB array parsing) ──────────────────────────────
     const itemsSoldResult = await pool.query(
-      `SELECT COALESCE(SUM(ti.quantity), 0) AS today_items_sold
-       FROM transactions t
-       JOIN transaction_items ti ON t.id = ti.transaction_id
+      `SELECT COALESCE(SUM((item->>'quantity')::int), 0) AS today_items_sold
+       FROM transactions t,
+            jsonb_array_elements(t.items) AS item
        WHERE DATE(t.created_at) = CURRENT_DATE
          AND t.status != 'fully_returned'`
     );
@@ -48,11 +65,8 @@ const getDashboard = async (req, res) => {
          p.model_type,
          p.stock,
          p.price,
-         c.name AS category_name,
-         c.watch_type,
-         c.brand_origin
+         p.category_id
        FROM products p
-       LEFT JOIN categories c ON p.category_id = c.id
        WHERE p.stock <= 5 AND p.is_active = TRUE
        ORDER BY p.stock ASC`
     );
@@ -75,6 +89,8 @@ const getDashboard = async (req, res) => {
        LIMIT 5`
     );
 
+    const mappedLowStock = lowStockResult.rows.map(mapProductCategory);
+
     return res.status(200).json({
       success: true,
       data: {
@@ -83,7 +99,7 @@ const getDashboard = async (req, res) => {
         today_items_sold: parseInt(itemsSoldResult.rows[0].today_items_sold, 10),
         today_returns: parseInt(returnsResult.rows[0].today_returns, 10),
         total_products: parseInt(totalProductsResult.rows[0].total_products, 10),
-        low_stock_products: lowStockResult.rows,
+        low_stock_products: mappedLowStock,
         recent_transactions: recentTxResult.rows,
       },
     });

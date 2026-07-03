@@ -31,8 +31,8 @@ export default function Sidebar() {
     <div className="w-64 h-screen bg-gray-900 text-white flex flex-col fixed left-0 top-0 z-10">
       {/* Header */}
       <div className="px-6 py-5 border-b border-gray-700">
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">🕐</span>
+        <div className="flex items-center gap-3">
+          <img src="/logo.jpeg" alt="Logo" className="w-8 h-8 rounded-full object-cover border border-indigo-500/30" />
           <div>
             <div className="font-bold text-indigo-400 text-sm leading-tight">
               Midnight Meridian

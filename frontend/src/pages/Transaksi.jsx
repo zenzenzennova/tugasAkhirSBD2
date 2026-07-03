@@ -131,6 +131,10 @@ function Receipt({ transaction, onClose }) {
               <span>Subtotal</span>
               <span>{formatRupiah(subtotal)}</span>
             </div>
+            <div className="flex justify-between text-gray-600">
+              <span>Pajak (10%)</span>
+              <span>{formatRupiah(transaction.tax_amount ?? (subtotal * 0.10))}</span>
+            </div>
             <div className="flex justify-between font-bold text-base text-gray-900 pt-1 border-t border-dashed border-gray-300">
               <span>Total Keseluruhan</span>
               <span className="text-indigo-700">{formatRupiah(total)}</span>
@@ -361,6 +365,7 @@ export default function Transaksi() {
       setShowReceipt(true);
       toast.success("Transaksi berhasil!");
       clearCart();
+      fetchInitialData();
     } catch (err) {
       const msg = err.response?.data?.message || "Transaksi gagal";
       toast.error(msg);
@@ -668,27 +673,12 @@ export default function Transaksi() {
                   </span>
                 </div>
 
-                {/* Tax */}
-                <div className="flex justify-between items-center text-sm text-gray-600">
-                  <span>Pajak</span>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={taxPercent}
-                      onChange={(e) =>
-                        setTaxPercent(
-                          Math.min(100, Math.max(0, Number(e.target.value))),
-                        )
-                      }
-                      className="w-12 text-center border border-gray-200 rounded-lg py-0.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                    />
-                    <span className="text-gray-400 text-xs">%</span>
-                    <span className="font-medium text-gray-700">
-                      +{formatRupiah(taxAmount)}
-                    </span>
-                  </div>
+                {/* Tax (Read-only) */}
+                <div className="flex justify-between text-sm text-gray-600">
+                  <span>Pajak (10%)</span>
+                  <span className="font-medium text-gray-700">
+                    +{formatRupiah(taxAmount)}
+                  </span>
                 </div>
 
                 {/* Divider */}
