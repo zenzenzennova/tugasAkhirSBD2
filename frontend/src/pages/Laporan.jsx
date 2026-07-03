@@ -21,6 +21,20 @@ function todayDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+async function fetchImageDataUrl(url) {
+  const response = await fetch(url);
+  if (!response.ok) return null;
+
+  const blob = await response.blob();
+
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 function StatCard({ icon, label, value, colorClass }) {
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 flex items-center gap-4">
@@ -61,14 +75,18 @@ export default function Laporan() {
     }
   };
 
-  const exportPDF = () => {
+  const exportPDF = async () => {
     if (!reportData) return;
 
     const doc = new jsPDF();
-    const { summary, top_products, stock_by_category, transactions } =
+    const { summary, top_products, stock_by_product, transactions } =
       reportData;
+    const logoDataUrl = await fetchImageDataUrl("/logo.jpeg");
 
     // Header
+    if (logoDataUrl) {
+      doc.addImage(logoDataUrl, "JPEG", 14, 10, 18, 18);
+    }
     doc.setFontSize(16);
     doc.setFont("helvetica", "bold");
     doc.text("LAPORAN HARIAN PENJUALAN", 105, 15, { align: "center" });
@@ -129,37 +147,10 @@ export default function Laporan() {
       doc.text("Tidak ada data produk terlaris.", 14, topY + 8);
     }
 
-    // Stock by category table
-    const stockY = doc.lastAutoTable
-      ? doc.lastAutoTable.finalY + 10
-      : topY + 20;
-    doc.setFontSize(11);
-    doc.setFont("helvetica", "bold");
-    doc.text("Stok per Kategori", 14, stockY);
-    if (stock_by_category && stock_by_category.length > 0) {
-      autoTable(doc, {
-        startY: stockY + 4,
-        head: [["Kategori", "Tipe", "Asal", "Total Produk", "Total Stok"]],
-        body: stock_by_category.map((s) => [
-          s.category_name,
-          s.watch_type || "-",
-          s.brand_origin || "-",
-          String(s.total_products ?? 0),
-          String(s.total_stock ?? 0),
-        ]),
-        styles: { fontSize: 9 },
-        headStyles: { fillColor: [79, 70, 229] },
-      });
-    } else {
-      doc.setFontSize(9);
-      doc.setFont("helvetica", "normal");
-      doc.text("Tidak ada data stok.", 14, stockY + 8);
-    }
-
     // Transactions table
     const trxY = doc.lastAutoTable
       ? doc.lastAutoTable.finalY + 10
-      : stockY + 20;
+      : topY + 20;
     if (trxY > 250) doc.addPage();
     const trxStartY = trxY > 250 ? 20 : trxY;
     doc.setFontSize(11);
@@ -185,17 +176,64 @@ export default function Laporan() {
       doc.text("Tidak ada transaksi pada tanggal ini.", 14, trxStartY + 8);
     }
 
+    // Stock by product table
+    const stockY = doc.lastAutoTable
+      ? doc.lastAutoTable.finalY + 10
+      : trxStartY + 20;
+    if (stockY > 250) doc.addPage();
+    const stockStartY = stockY > 250 ? 20 : stockY;
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.text("Sisa Stok Produk", 14, stockStartY);
+    if (stock_by_product && stock_by_product.length > 0) {
+      autoTable(doc, {
+        startY: stockStartY + 4,
+        head: [["Nama Produk", "Kategori", "Total Stok"]],
+        body: stock_by_product.map((s) => [
+          s.product_name,
+          s.category_type || "-",
+          String(s.total_stock ?? 0),
+        ]),
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [79, 70, 229] },
+      });
+    } else {
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      doc.text("Tidak ada data stok produk.", 14, stockStartY + 8);
+    }
+
     doc.save(`laporan-${selectedDate}.pdf`);
     toast.success("PDF berhasil diekspor!");
   };
 
   const summary = reportData?.summary;
   const topProducts = reportData?.top_products || [];
-  const stockByCategory = reportData?.stock_by_category || [];
+  const stockByProduct = reportData?.stock_by_product || [];
   const transactions = reportData?.transactions || [];
 
   return (
     <div className="p-6 space-y-6">
+      {/* Report header */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex items-center gap-4">
+        <img
+          src="/logo.jpeg"
+          alt="Midnight Meridian logo"
+          className="w-16 h-16 object-contain rounded-lg border border-gray-100 bg-white"
+        />
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">
+            Laporan Harian Penjualan
+          </h1>
+          <p className="text-sm font-semibold text-gray-700 mt-1">
+            Midnight Meridian
+          </p>
+          <p className="text-sm text-gray-500">
+            Toko Jam Tangan Terpercaya | Jl. Karawaci No. 1, Tangerang
+          </p>
+        </div>
+      </div>
+
       {/* Date picker */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
         <div className="flex flex-wrap items-end gap-4">
@@ -362,16 +400,16 @@ export default function Laporan() {
             )}
           </div>
 
-          {/* Stock by Category */}
+          {/* Stock by Product */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200">
             <div className="px-6 py-4 border-b border-gray-100">
               <h2 className="font-semibold text-gray-800">
-                📦 Stok per Kategori
+                📦 Sisa Stok Produk
               </h2>
             </div>
-            {stockByCategory.length === 0 ? (
+            {stockByProduct.length === 0 ? (
               <div className="px-6 py-8 text-center text-gray-400 text-sm">
-                Tidak ada data stok.
+                Tidak ada data stok produk.
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -379,12 +417,10 @@ export default function Laporan() {
                   <thead>
                     <tr className="bg-gray-50 text-gray-500 text-xs uppercase">
                       <th className="px-6 py-3 text-left font-medium">
-                        Kategori
+                        Nama Produk
                       </th>
-                      <th className="px-6 py-3 text-left font-medium">Tipe</th>
-                      <th className="px-6 py-3 text-left font-medium">Asal</th>
-                      <th className="px-6 py-3 text-center font-medium">
-                        Total Produk
+                      <th className="px-6 py-3 text-left font-medium">
+                        Kategori
                       </th>
                       <th className="px-6 py-3 text-center font-medium">
                         Total Stok
@@ -392,19 +428,13 @@ export default function Laporan() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {stockByCategory.map((s, i) => (
+                    {stockByProduct.map((s, i) => (
                       <tr key={i} className="hover:bg-gray-50">
                         <td className="px-6 py-3 font-medium text-gray-900">
-                          {s.category_name}
+                          {s.product_name}
                         </td>
                         <td className="px-6 py-3 text-gray-600 capitalize">
-                          {s.watch_type || "-"}
-                        </td>
-                        <td className="px-6 py-3 text-gray-600 capitalize">
-                          {s.brand_origin || "-"}
-                        </td>
-                        <td className="px-6 py-3 text-center text-gray-700">
-                          {s.total_products ?? 0}
+                          {s.category_type || "-"}
                         </td>
                         <td className="px-6 py-3 text-center">
                           <span className="bg-green-100 text-green-700 text-xs font-semibold px-2 py-0.5 rounded-full">

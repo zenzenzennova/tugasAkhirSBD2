@@ -63,6 +63,19 @@ const getDailyReport = async (req, res) => {
       "SELECT * FROM stock_by_category_view ORDER BY category_id ASC",
     );
 
+    // ── Stock by product ──────────────────────────────────────────────────────
+    const productStockResult = await pool.query(
+      `SELECT
+         p.id,
+         p.name AS product_name,
+         COALESCE(c.watch_type, '-') AS category_type,
+         p.stock AS total_stock
+       FROM products p
+       LEFT JOIN categories c ON p.category_id = c.id
+       WHERE p.is_active = TRUE
+       ORDER BY c.watch_type ASC NULLS LAST, p.name ASC`,
+    );
+
     // ── Full transaction list for that date ───────────────────────────────────
     const transactionsResult = await pool.query(
       `SELECT
@@ -117,6 +130,7 @@ const getDailyReport = async (req, res) => {
         returns: returnsWithItems,
         top_products: topProductsResult.rows,
         stock_by_category: stockResult.rows,
+        stock_by_product: productStockResult.rows,
         transactions: transactionsWithItems,
       },
     });
