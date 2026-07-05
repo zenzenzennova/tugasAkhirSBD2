@@ -22,7 +22,7 @@ const CONDITION_OPTIONS = [
 ];
 
 function getTransactionItemId(item) {
-  return item?.id ?? item?.transaction_item_id ?? null;
+  return item?.id ?? item?.transaction_item_id ?? item?.product_id ?? null;
 }
 
 function calcItemRefund(item) {
